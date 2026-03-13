@@ -1,0 +1,605 @@
+import os
+import json
+import math
+import matplotlib.pyplot as plt
+import random
+import csv
+import time
+from cryptography.fernet import Fernet
+from tqdm import tqdm
+def get_distinct_random_color():
+    """生成高区分度的随机颜色"""
+    r = round(random.uniform(0, 1), 1)  # 保留1位小数，减少相近
+    g = round(random.uniform(0, 1), 1)
+    b = round(random.uniform(0, 1), 1)
+    return (r, g, b)
+
+KEY_DICT = {
+    "p100.json": b"nH1yNvOmX-TiomLCPd4l9PgMyD7mVu2xwVxr4OdKJ54=",
+    "calibration.json": b"y0Scba1u_0XW62Lm0ZmLcNhkyuXH64NMvuf3sC2mVsA=",
+    "imu.json": b"GffYa01owAIGIBs55LZcj_ARaSSSSkZu-n-YUGAJLc4=",
+    "fisheye_stitch.json": b"NYYrjlI2mis0FYLGyQrZQc0xvPj2j_x_6JPKimK9sbk=",
+    "sensor_alignment.json": b"CBZ3GvjUayqlUtZI9mIJNDXZMGRpvvP0r-c1_bAkb8I=",
+    "pointcloud_format.json": b"3J9_AVs8M0yxLyi8dUZqZpEoNmFwt65o1L2u7aXTzVc=",
+    "sensor_alignment_od.json": b"WKYmRuBr81iu0qJpXSP7l06plpKB0Bk44Pxj77RY1IM=",
+    "prelabel_2d.json": b"N7N9AlgqLu5vLw59toYu_EZE1xkdfLNpoWod82dIkoc=",
+    "prelabel_static_2d.json": b"6AZzQ2lR3TG-2GtqmScFBISzIQOBzV0Z6qCmNb3ePw0=",
+    "prelabel_moving_2d.json": b"9po0Ctj3JVsHfvvq_j-Br6W6YAi3dBdxeDFwutIOrzQ=",
+    "sensor_alignment_slam.json": b"U1suPM-cNMz9sdwoNrZJcoTtzXcUnvC4vD3Fu0VN--o=",
+    "odom.json": b"rn5hNZp5kBQT5z1dMyaiSn-lesBDXtpjS06ttm6iaws=",
+    "sensor_alignment_monomap.json": b"d6QRq2Lkwso1RkSl9gNxICQJ89BwRkWW25T7A5AZ_2g=",
+    "slam.json": b"ZmHbiujziuCseF3IUVgNJxNAqP_m9neritnCDxMqalo=",
+    "prelabel_3D_infer.json": b"HnCKzDL4Mlx5fa2uqsQ3yOhE0v7Wn7ssso-ZnG84bvo=",
+    "prelabel_3D_track.json": b"bQvP9kNezIJqINrQnnGULjL7-9b2_ESt6NDrjGUq-xc=",
+    "prelabel_3D_refine.json": b"VcEIfsX69xhoSbWcTwkFfxnGw98CRAOqkXYYiLRl8iY=",
+    "prelabel_3D_associate.json": b"kAmGO5QBd7VPeJbdAKmEvUWQu-CJIwvKcdWPapCtSXY=",
+    "Front120_annotation.json": b"2XIKuJ8Gqx8MxsQd3Z08YRhHJENIMaiS0-nNaxPftSo=",
+    "sensor_alignment_remove_na.json": b"Ege2KbYxYlvzTiV7CaAprgqr6e0VX9NR9C3wCEdUA80=",
+}
+
+
+def draw_lanes(lane_data : list, wide_info : dict):
+    plt.figure(figsize=(8, 6))
+
+    plot_data = []
+    for i in lane_data:
+        data_dict = {}
+        data_dict["id"] = i["line_num"]
+        points = [[k["x"], k["y"]] for k in i["lineData"]]
+        data_dict["points"] = points
+        plot_data.append(data_dict)
+    # for m in plot_data:
+    #     print(f"id: {m['id']}, point size: {len(m['points'])}")
+    # 遍历数据并绘图
+    for idx, item in enumerate(plot_data):
+        # 提取id和points
+        obj_id = item["id"]
+        points = item["points"]
+        
+        # 拆分points为x、y坐标列表（[[x1,y1],[x2,y2]] → x=[x1,x2], y=[y1,y2]）
+        x = [p[0] for p in points]
+        y = [p[1] for p in points]
+        
+        # 绘制折线 + 散点（双效果更清晰）
+        # label：图例名称，color：指定颜色，marker：点的样式，linewidth：线宽
+        plt.plot(x, y, label=f'ID {obj_id}', color=get_distinct_random_color(), marker='o', linewidth=0.01)
+        # 可选：单独绘制散点（若不需要折线，仅保留这行即可）
+        # plt.scatter(x, y, label=f'ID {obj_id}', color=colors[idx], s=50)
+        for k, v in wide_info.items():
+            if k == obj_id:
+                label_idx = 0
+                for r in v:
+                    if r[0] <= r[1] and r[0] >=0 and r[1] < len(points):
+                        label_idx += 1
+                        x = [p[0] for p in points[r[0] : r[1]+1]]
+                        y = [p[1] for p in points[r[0] : r[1]+1]]
+                        plt.plot(x, y, label=f'ID {obj_id}_{label_idx}', color=(0.5,0.5,0.5), marker='*', linewidth=0.04)
+
+    # 添加图表元素
+    plt.xlabel('X axis', fontsize=12)  # X轴标签
+    plt.ylabel('Y axis', fontsize=12)  # Y轴标签
+    plt.title('display points', fontsize=14, fontweight='bold')  # 标题
+    plt.legend(fontsize=10)  # 显示图例（对应label）
+    plt.grid(True, alpha=0.3)  # 显示网格（alpha调整透明度）
+    plt.axis('equal')  # 可选：让x/y轴刻度等比例，避免变形
+    # plt.savefig('wide_lane.svg', format='svg', bbox_inches='tight', dpi=300)
+    plt.show()
+
+def get_centerline_json_data(file_path : str):
+    if not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f_read:
+            json_data = json.load(f_read)
+            if "annotation" not in json_data:
+                return None
+            if len(json_data["annotation"]) == 0:
+                return None
+            for ele in json_data["annotation"]:
+                if "lineData" not in ele:
+                    return None
+                if len(ele["lineData"]) == 0:
+                    continue
+                for ele1 in ele["lineData"]:
+                    if "direction" not in ele1:
+                        return None
+                    if "lanewidth" not in ele1:
+                        return None
+            return json_data
+    except Exception as e:
+        raise ValueError(f"failed reading {file_path} as {str(e)}")
+
+def get_lineedge_json_data(file_path : str):
+    if not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f_read:
+            json_data = json.load(f_read)
+            if "annotation" not in json_data:
+                return None
+            if len(json_data["annotation"]) == 0:
+                return None
+            for ele in json_data["annotation"]:
+                if "lineData" not in ele:
+                    return None
+                if len(ele["lineData"]) == 0:
+                    continue
+                for ele1 in ele["lineData"]:
+                    if "classIndex" not in ele1:
+                        return None
+            return json_data
+    except Exception as e:
+        raise ValueError(f"failed reading {file_path} as {str(e)}")
+
+def get_wide_lanes(annotation : list):
+    wide_lanes = []
+    if len(annotation) == 0:
+        return []
+    print(len(annotation))
+    for ele in annotation:
+        for ele1 in ele["lineData"]:
+            if ele1["lanewidth"] == 1.0:
+                wide_lanes.append(ele)
+                break
+    wide_lane_ids = [i["line_num"] for i in wide_lanes]
+    print(wide_lane_ids)
+    wide_point_sta = {}
+    for j in wide_lanes:
+        cnt = 0
+        wide_range = []
+        begin = 0
+        for idx, p in enumerate(j["lineData"]):
+            if p["lanewidth"] == 1.0:
+                cnt += 1
+                if (len(wide_range)) == 0 or begin == 0:
+                    wide_range.append([idx, idx])
+                else:
+                    wide_range[-1][1] = idx
+                begin = 1
+            else:
+                begin = 0
+        wide_point_sta[j["line_num"]] = wide_range
+    print(wide_point_sta)
+    return wide_lanes, wide_point_sta
+
+def load_line_edge_from_gt(json_data, results):
+    results['gt_bev_lane_freespace'] = {'lane':[]}
+    for line in json_data['annotation']:
+        valid = 1
+        for ele in line['lineData']:
+            if ele['classIndex'] == 5 or ele['classIndex'] == 6 or ele['classIndex'] == 0 or ele['classIndex'] > 15 or (ele['classIndex'] > 6 and ele['classIndex'] < 13):
+                valid = 0
+                break
+        if valid == 1:
+            x_s = [ele['x'] for ele in line['lineData']]
+            y_s = [ele['y'] for ele in line['lineData']]
+            z_s = [ele['z'] for ele in line['lineData']]
+            classIndexs = [ele['classIndex'] for ele in line['lineData']]
+            new_lane = {}
+            new_lane['x'] = x_s
+            new_lane['y'] = y_s
+            new_lane['z'] = z_s
+            new_lane['classIndex'] = classIndexs
+            results['gt_bev_lane_freespace']['lane'].append(new_lane)
+
+def is_wide_lane_gt(json_data):
+    if 'annotation' in json_data.keys():
+        for lane in json_data['annotation']:
+            if 'lineData' in lane.keys():
+                for p in lane['lineData']:
+                    if 'lanewidth' in p.keys():
+                        if 1 == p['lanewidth']:
+                            return True
+    return False
+
+def load_lane_from_gt(json_data, results):
+    results['gt_bev_centerline'] = {'centerline':[]}
+    for lane in json_data['annotation']:
+        x_s = [ele['x'] for ele in lane['lineData']]
+        y_s = [ele['y'] for ele in lane['lineData']]
+        z_s = [ele['z'] for ele in lane['lineData']]
+        lanewidths = [ele['lanewidth'] for ele in lane['lineData']]
+        new_lane = {}
+        new_lane['x'] = x_s
+        new_lane['y'] = y_s
+        new_lane['z'] = z_s
+        new_lane['lanewidth'] = lanewidths
+        results['gt_bev_centerline']['centerline'].append(new_lane)
+
+def cubic_bezier_smooth(p0, p1, p2, p3, steps):
+    out_points = {'x': [], 'y': [], 'z': []}
+    for i in range(1, steps):
+        t = i * 1.0 / steps
+        t_sq = t ** 2
+        t_cu = t ** 3
+        one_minus_t = 1 - t
+        one_minus_t_sq  = one_minus_t ** 2
+        one_minus_t_cu  = one_minus_t ** 3
+        x = one_minus_t_cu * p0[0] + 3 * one_minus_t_sq * t * p1[0] + 3 * one_minus_t * t_sq * p2[0] + t_cu * p3[0]
+        y = one_minus_t_cu * p0[1] + 3 * one_minus_t_sq * t * p1[1] + 3 * one_minus_t * t_sq * p2[1] + t_cu * p3[1]
+        z = one_minus_t_cu * p0[2] + 3 * one_minus_t_sq * t * p1[2] + 3 * one_minus_t * t_sq * p2[2] + t_cu * p3[2]
+        out_points['x'].append(x)
+        out_points['y'].append(y)
+        out_points['z'].append(z)
+    return out_points
+
+def rebuild_wide_lane(results):
+    if 'gt_bev_centerline' not in results.keys() or 'gt_bev_lane_freespace' not in results.keys():
+        return
+    if 'centerline' not in results['gt_bev_centerline'].keys():
+        return
+    if 'lane' not in results['gt_bev_lane_freespace'].keys():
+        return
+    for lane_idx, centerline in enumerate(results['gt_bev_centerline']['centerline']):
+        if 'lanewidth' not in centerline.keys() or 'x' not in centerline.keys() or 'y' not in centerline.keys() or 'z' not in centerline.keys() or len(centerline['x']) != len(centerline['lanewidth']) or len(centerline['x']) != len(centerline['y']) or len(centerline['x']) != len(centerline['z']):
+            continue
+        if 1 not in centerline['lanewidth']:
+            continue
+        #get wide lane ranges
+        wide_ranges = []
+        in_width = 0
+        for idx, width in enumerate(centerline['lanewidth']):
+            if width == 1:
+                if in_width == 0:
+                    wide_ranges.append([idx, idx])
+                else:
+                    wide_ranges[-1][1] = idx
+                in_width = 1
+            else:
+                in_width = 0
+        if not wide_ranges:
+            continue
+        start_time  = time.time()
+        for start, end in wide_ranges:    
+            nearest_line_vote = {}
+            nearest_table = []
+            for idx in range(start, end+1):
+                checkpoint = [centerline['x'][idx], centerline['y'][idx], centerline['z'][idx]]
+                min_dist = 1e10
+                min_idx = -1
+                min_vec = []
+                min_target_p_idx = -1
+                for line_idx, line in enumerate(results['gt_bev_lane_freespace']['lane']):
+                    if 'x' not in line.keys() or 'y' not in line.keys() or 'z' not in line.keys() or len(line['x']) != len(line['y']) or len(line['x']) != len(line['z']):
+                        continue
+                    for idx_p, x in enumerate(line['x']):
+                        point_target = [line['x'][idx_p], line['y'][idx_p], line['z'][idx_p]]
+                        if abs(point_target[0] - checkpoint[0]) > 3.5 or abs(point_target[1] - checkpoint[1]) > 3.5:
+                            continue
+                        vec_lane_line = [point_target[0] - checkpoint[0], point_target[1] - checkpoint[1], point_target[2] - checkpoint[2]]
+                        dist = (vec_lane_line[0]*vec_lane_line[0] + vec_lane_line[1]*vec_lane_line[1] + vec_lane_line[2]*vec_lane_line[2]) 
+                        if idx < end:
+                            next_point = [centerline['x'][idx+1], centerline['y'][idx+1], centerline['z'][idx+1]]
+                            vec_forward_diff = [next_point[0] - checkpoint[0], next_point[1] - checkpoint[1], next_point[2] - checkpoint[2]]
+                            cos_heading = vec_forward_diff[0] * vec_lane_line[0] + vec_forward_diff[1] * vec_lane_line[1]
+                            norm_vec_fwd_xy = (vec_forward_diff[0] * vec_forward_diff[0] + vec_forward_diff[1] * vec_forward_diff[1]) ** 0.5
+                            norm_vec_linelane_xy = (vec_lane_line[0] * vec_lane_line[0] + vec_lane_line[1] * vec_lane_line[1]) ** 0.5
+                            if abs(cos_heading / (norm_vec_fwd_xy * norm_vec_linelane_xy)) > 0.707:
+                                continue
+                        if dist < min_dist:
+                            min_dist = dist
+                            min_idx = line_idx
+                            min_vec = vec_lane_line
+                            min_target_p_idx = idx_p
+                if min_idx > -1:
+                    nearest_table.append([idx, min_idx, min_dist, min_vec[0], min_vec[1], min_vec[2], min_target_p_idx])
+                    if min_idx in nearest_line_vote.keys():
+                        nearest_line_vote[min_idx] = nearest_line_vote[min_idx] + 1
+                    else:
+                        nearest_line_vote[min_idx] = 1
+            vote_idx = -1
+            max_vote = 0
+            for vidx, vt in nearest_line_vote.items():
+                if vt > max_vote:
+                    vote_idx = vidx
+                    max_vote = vt
+            if vote_idx > -1 :
+                print(f"centerline idx {lane_idx} in range {start} {end} match nearest line {vote_idx}")
+                start_target_idx = -1
+                start_lane_idx = -1
+                start_vec = []
+                cur_vec = []
+                dist_min = -1
+                start_target_p_idx = -1
+                for a,b,c,d,e,f,g in nearest_table:
+                    if b == vote_idx:
+                        start_target_idx = b
+                        start_lane_idx = a
+                        start_vec = [d, e, f]
+                        dist_min = c
+                        start_target_p_idx = g
+                        break
+                print(f"start_target_idx {start_target_idx}  start_lane_idx {start_lane_idx} start_vec {start_vec[0] * 0.25 /dist_min} {start_vec[1] * 0.25 /dist_min} {start_vec[2] * 0.25/dist_min} target start idx {start_target_p_idx}")
+                if start_lane_idx == -1 or start_target_idx == -1 or start_target_p_idx == -1:
+                    continue
+                loop1 = 0
+                loop2 = 0
+                loop3 = 0
+                last_idx = 0
+                begin_idx = -1
+                for idx_lane in range(start, end+1):
+                    if idx_lane == start_lane_idx:
+                        break
+                    # if centerline['lanewidth'][idx_lane] != 1:
+                    #     continue
+                    loop1 = loop1 + 1
+                    norm = (start_vec[0]*start_vec[0] + start_vec[1]*start_vec[1] + start_vec[2]*start_vec[2]) ** 0.5
+                    cur_vec = [start_vec[0] / norm, start_vec[1] / norm, start_vec[2] / norm]
+                    centerline['x'][idx_lane] = centerline['x'][idx_lane] + cur_vec[0] * 0.25
+                    centerline['y'][idx_lane] = centerline['y'][idx_lane] + cur_vec[1] * 0.25
+                    centerline['z'][idx_lane] = centerline['z'][idx_lane] + cur_vec[2] * 0.25
+                if start_lane_idx+1 == len(centerline['x']):
+                    continue
+                cur_vec1 = []
+                for idx_lane in range(start, end+1):
+                    if idx_lane < start_lane_idx:
+                        continue
+                    if centerline['lanewidth'][idx_lane] != 1:
+                        continue
+                    if start_target_p_idx < len(results['gt_bev_lane_freespace']['lane'][vote_idx]['x']):
+                        point_target = [results['gt_bev_lane_freespace']['lane'][vote_idx]['x'][start_target_p_idx], results['gt_bev_lane_freespace']['lane'][vote_idx]['y'][start_target_p_idx], results['gt_bev_lane_freespace']['lane'][vote_idx]['z'][start_target_p_idx]]
+                        vec_lane_line = [point_target[0] - centerline['x'][idx_lane], point_target[1] - centerline['y'][idx_lane], point_target[2] - centerline['z'][idx_lane]]
+                        norm = (vec_lane_line[0]*vec_lane_line[0] + vec_lane_line[1]*vec_lane_line[1] + vec_lane_line[2]*vec_lane_line[2]) ** 0.5
+                        cur_vec1 = [vec_lane_line[0] / norm, vec_lane_line[1] / norm, vec_lane_line[2] / norm]
+                        centerline['x'][idx_lane] = centerline['x'][idx_lane] + cur_vec1[0] * 0.25
+                        centerline['y'][idx_lane] = centerline['y'][idx_lane] + cur_vec1[1] * 0.25
+                        centerline['z'][idx_lane] = centerline['z'][idx_lane] + cur_vec1[2] * 0.25
+                        start_target_p_idx = start_target_p_idx + 1
+                        loop2 = loop2 + 1
+                    elif len(cur_vec1) == 3:
+                        centerline['x'][idx_lane] = centerline['x'][idx_lane] + cur_vec1[0] * 0.25
+                        centerline['y'][idx_lane] = centerline['y'][idx_lane] + cur_vec1[1] * 0.25
+                        centerline['z'][idx_lane] = centerline['z'][idx_lane] + cur_vec1[2] * 0.25
+                        loop3 = loop3 + 1
+                print(f"loop1 {loop1} loop2 {loop2} loop3 {loop3}" )
+        bezier_ranges = []
+        for range_idx, wide_range in enumerate(wide_ranges):
+            smooth_radius_0 = 0
+            smooth_radius_1 = 0
+            if range_idx == 0:
+                smooth_radius_0 = min(wide_range[0], int((wide_range[1]-wide_range[0])/2))
+                smooth_radius_0 = min(smooth_radius_0, 100)
+            else:
+                pre_range = range_idx - 1
+                smooth_radius_0 = min(int((wide_range[0] - wide_ranges[pre_range][1])/2), int((wide_range[1]-wide_range[0])/2))
+                smooth_radius_0 = min(smooth_radius_0, 100)                
+            if range_idx + 1 == len(wide_ranges):
+                smooth_radius_1 = min(len(centerline['x']) - 1 - wide_range[1], int((wide_range[1]-wide_range[0])/2))
+                smooth_radius_1 = min(smooth_radius_1, 100)
+            else:
+                next_range = range_idx + 1
+                smooth_radius_1 = min(int((wide_ranges[next_range][0] - wide_range[1])/2), int((wide_range[1]-wide_range[0])/2))
+                smooth_radius_1 = min(smooth_radius_1, 100)
+            if smooth_radius_0 > 1:
+                p0 = [centerline['x'][wide_range[0]-smooth_radius_0], centerline['y'][wide_range[0]-smooth_radius_0], centerline['z'][wide_range[0]-smooth_radius_0]]
+                p1 = [centerline['x'][wide_range[0]-1], centerline['y'][wide_range[0]-1], centerline['z'][wide_range[0]-1]]
+                p2 = [centerline['x'][wide_range[0]], centerline['y'][wide_range[0]], centerline['z'][wide_range[0]]]
+                p3 = [centerline['x'][wide_range[0]+smooth_radius_0], centerline['y'][wide_range[0]+smooth_radius_0], centerline['z'][wide_range[0]+smooth_radius_0]]
+                bezier_output = cubic_bezier_smooth(p0, p1, p2, p3, 2 * smooth_radius_0)
+                bezier_ranges.append({'start': wide_range[0]-smooth_radius_0, 'end': wide_range[0]+smooth_radius_0, 'smooth': bezier_output})
+            if smooth_radius_1 > 1:
+                p4 = [centerline['x'][wide_range[1]-smooth_radius_1], centerline['y'][wide_range[1]-smooth_radius_1], centerline['z'][wide_range[1]-smooth_radius_1]]
+                p5 = [centerline['x'][wide_range[1]-1], centerline['y'][wide_range[1]-1], centerline['z'][wide_range[1]-1]]
+                p6 = [centerline['x'][wide_range[1]], centerline['y'][wide_range[1]], centerline['z'][wide_range[1]]]
+                p7 = [centerline['x'][wide_range[1]+smooth_radius_1], centerline['y'][wide_range[1]+smooth_radius_1], centerline['z'][wide_range[1]+smooth_radius_1]]
+                bezier_output1 = cubic_bezier_smooth(p4, p5, p6, p7, 2 * smooth_radius_1)
+                bezier_ranges.append({'start': wide_range[1]-smooth_radius_1, 'end': wide_range[1]+smooth_radius_1, 'smooth': bezier_output1})
+            if smooth_radius_0 > 1:
+                print(f"for range {wide_range} smooth start {wide_range[0]-smooth_radius_0} - {wide_range[0]+smooth_radius_0} smooth size {len(bezier_output['x'])}")
+            if smooth_radius_1 > 1:
+                print(f"for range {wide_range} smooth end {wide_range[1]-smooth_radius_1} - {wide_range[1]+smooth_radius_1} smooth size {len(bezier_output1['x'])}")
+        if len(bezier_ranges) > 0:
+            new_centerline = {'x':[], 'y':[], 'z':[]}
+            for b_idx, b_out in enumerate(bezier_ranges):
+                print(f"range start {b_out['start']} end {b_out['end']} bezier output size {len(b_out['smooth']['x'])}")
+                if b_idx == 0:
+                    for i in range(0, b_out['start']+1):
+                        new_centerline['x'].append(centerline['x'][i])
+                        new_centerline['y'].append(centerline['y'][i])
+                        new_centerline['z'].append(centerline['z'][i])
+                else:
+                    for i in range(bezier_ranges[b_idx-1]['end'], b_out['start']+1):
+                        new_centerline['x'].append(centerline['x'][i])
+                        new_centerline['y'].append(centerline['y'][i])
+                        new_centerline['z'].append(centerline['z'][i])
+                new_centerline['x'].extend(b_out['smooth']['x'])
+                new_centerline['y'].extend(b_out['smooth']['y'])
+                new_centerline['z'].extend(b_out['smooth']['z'])
+                if b_idx + 1 == len(bezier_ranges):
+                    for i in range(b_out['end'], len(centerline['x'])):
+                        new_centerline['x'].append(centerline['x'][i])
+                        new_centerline['y'].append(centerline['y'][i])
+                        new_centerline['z'].append(centerline['z'][i])
+            centerline['x'] = []
+            centerline['x'].extend(new_centerline['x'])
+            centerline['y'] = []
+            centerline['y'].extend(new_centerline['y'])
+            centerline['z'] = []
+            centerline['z'].extend(new_centerline['z'])
+        print(f"consume time {time.time() - start_time}")
+
+def write_back_modified_centerline(centerlines, json_data, file_path):
+    if len(centerlines) == len(json_data['annotation']):
+        for i, lane in enumerate(centerlines):
+            if 1 not in lane['lanewidth']:
+                continue
+            if len(lane['x']) == len(json_data['annotation'][i]['lineData']):
+                print(f"update {i}th lane in centerline with {len(lane['x'])} points")
+                for idx, _ in enumerate(lane['x']):
+                    json_data['annotation'][i]['lineData'][idx]['x'] = lane['x'][idx]
+                    json_data['annotation'][i]['lineData'][idx]['y'] = lane['y'][idx]
+                    json_data['annotation'][i]['lineData'][idx]['z'] = lane['z'][idx]
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(json_data, f)
+
+def write_lanes_to_csv(centerlines, file_path):
+    data_rows = []
+    data_rows.append(["wkt", "id", "widelane"])
+    for idx, lane in enumerate(centerlines):
+        str_out = 'LINESTRING('
+        for idx_p, x_val in enumerate(lane['x']):
+            str_out = str_out + f"{lane['x'][idx_p]}" + " " + f"{lane['y'][idx_p]}"
+            if idx_p + 1 < len(lane['x']):
+                str_out = str_out + ','
+        str_out = str_out + ")"
+        is_wide = 0
+        if 1 in lane['lanewidth']:
+            is_wide = 1
+        data_rows.append([str_out, str(idx), str(is_wide)])
+    with open(file_path, 'w', newline="", encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerows(data_rows)
+        # str_out = 'wkt,id\n'
+        # for idx, lane in enumerate(centerlines):
+        #     str_out = str_out + 'LINESTRING('
+        #     for idx_p, x_val in enumerate(lane['x']):
+        #         str_out = str_out + f"{lane['x'][idx_p]}" + " " + f"{lane['y'][idx_p]}"
+        #         if idx_p + 1 < len(lane['x']):
+        #             str_out = str_out + ','
+        #     str_out = str_out + ")," + f"{idx}" + "\n"
+        # f.write(str_out)
+
+def write_lines_to_csv(lines, file_path):
+    data_rows = []
+    data_rows.append(["wkt", "id"])
+    for idx, lane in enumerate(lines):
+        str_out = 'LINESTRING('
+        for idx_p, x_val in enumerate(lane['x']):
+            str_out = str_out + f"{lane['x'][idx_p]}" + " " + f"{lane['y'][idx_p]}"
+            if idx_p + 1 < len(lane['x']):
+                str_out = str_out + ','
+        str_out = str_out + ")"
+        data_rows.append([str_out, str(idx)])
+    with open(file_path, 'w', newline="", encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerows(data_rows)
+
+def load_encrypt_data(json_path, info_type):
+        with open(json_path, "rb") as f:
+            json_info = f.read()
+        key = KEY_DICT[info_type]
+        fernet = Fernet(key)
+        decrypted_data = fernet.decrypt(json_info)
+        json_data = json.loads(decrypted_data.decode("utf-8"))
+        return json_data
+
+def main_entrance():
+    # open gt folder list
+    # check if gt files exist
+    # get wide lane gts
+    # gt_folder_file = os.path.join(os.getcwd(), 'input', 'gt_folders.txt')
+
+
+
+    # wide_lane_gt_paths = []
+    # wide_folders_str = ''
+    # with open (gt_folder_file, 'r', encoding='utf-8') as f:
+    #     lines = f.read().splitlines()
+    #     for l in tqdm(lines, desc='gt folders'):
+    #         if l.find("/202509") == -1 and l.find("/202510") == -1 and l.find("/202511") == -1:
+    #             continue
+    #         # print(os.path.join(l, 'Mono3D', 'MonoMap'))
+    #         gt_path = os.path.join(l, 'Mono3D', 'MonoMap')
+    #         if os.path.isdir(gt_path):
+    #             centerline_path = os.path.join(gt_path, "Front120_centerlane_annotation_v2.0.json")
+    #             line_old_path = os.path.join(gt_path, "Front120_annotation_v1.json")
+    #             line_new_path = os.path.join(gt_path, "Front120_annotation_v1.1.json")
+    #             if os.path.exists(centerline_path) and (os.path.exists(line_old_path) or os.path.exists(line_new_path)):
+    #                 line_path = line_new_path if os.path.exists(line_new_path) else line_old_path
+    #                 json_data = load_encrypt_data(centerline_path, "Front120_annotation.json")
+    #                 is_wide = is_wide_lane_gt(json_data)
+    #                 if is_wide:
+    #                     wide_lane_gt_paths.append(gt_path)
+    #                 print(f"centerline gt {centerline_path} is wide {is_wide}, line file path {line_path}")
+    #             else:
+    #                 print(f"{gt_path} with incomplete gt files")
+    # print(f"total {len(wide_lane_gt_paths)} wide gt centerlane files")
+    # with open(os.path.join(os.getcwd(), 'output', 'gt_2025_9_10_11.txt'), 'w') as fw:
+    #     wide_folders_str = '\n'.join(wide_lane_gt_paths)
+    #     fw.write(wide_folders_str)
+
+
+    with open(os.path.join(os.getcwd(), 'output', 'gt_2025_9_10_11.txt'), 'r') as f:
+        lines = f.read().splitlines()
+        for l in lines:
+            if l.find('20250907_192253_30') == -1:
+                continue
+            foldername = l.split('/')[7] + '_' + l.split('/')[-3]
+            gt_path = l
+            if os.path.isdir(gt_path):
+                print(f"{gt_path} exist")
+                centerline_path = os.path.join(gt_path, "Front120_centerlane_annotation_v2.0.json")
+                line_old_path = os.path.join(gt_path, "Front120_annotation_v1.json")
+                line_new_path = os.path.join(gt_path, "Front120_annotation_v1.1.json")
+                if os.path.exists(centerline_path) and (os.path.exists(line_old_path) or os.path.exists(line_new_path)):
+                    line_path = line_new_path if os.path.exists(line_new_path) else line_old_path
+                    centerlane_json_data = load_encrypt_data(centerline_path, "Front120_annotation.json")
+                    line_json_data = load_encrypt_data(line_path, "Front120_annotation.json")
+                    result = {}
+                    load_line_edge_from_gt(line_json_data, result)
+                    load_lane_from_gt(centerlane_json_data, result)
+                    output_folder = os.path.join(os.getcwd(), 'output', 'wide_gts_v2', foldername)
+                    os.mkdir(output_folder)
+                    write_lanes_to_csv(result['gt_bev_centerline']['centerline'], os.path.join(output_folder, 'lane_origin.csv'))
+                    write_lines_to_csv(result['gt_bev_lane_freespace']['lane'], os.path.join(output_folder, 'line.csv'))
+                    rebuild_wide_lane(result)
+                    write_lanes_to_csv(result['gt_bev_centerline']['centerline'], os.path.join(output_folder, 'lane_new.csv'))
+            print(foldername)
+
+
+    # root_path = "/mnt/gt/desay_h3c/DriverData/driving_data/A19_003"
+    # if not os.path.exists(root_path):
+    #     return
+    # # print(os.listdir(root_path))
+    # cnt = 0
+    # for data_folder in os.listdir(root_path):
+    #     if data_folder.find("202511") != -1 or data_folder.find("202509") != -1 or data_folder.find("202510") != -1:
+    #         print(data_folder)
+    #         for root, dirs, files in os.walk(os.path.join(root_path, data_folder)):
+    #             if "SensorAnnotation" in dirs:
+    #                 gt_base_path = os.path.join(root, 'SensorAnnotation')
+    #                 print(f"{gt_base_path}")
+    #             # if "MonoMap" in dirs:
+    #             #     gt_base_path = os.path.join(root, 'MonoMap')
+    #             #     if (os.path.isfile(os.path.join(gt_base_path, "Front120_annotation_v1.json")) or os.path.isfile(os.path.join(gt_base_path, "Front120_annotation_v1.1.json"))) and os.path.isfile(os.path.join(gt_base_path, "Front120_centerlane_annotation_v2.0.json")):
+    #             #         json_data = get_centerline_json_data(os.path.join(gt_path, "Front120_annotation.json"))
+    #             #         cnt = cnt + 1
+    #             #         print(f"{gt_base_path}")
+    #             #         centerline_file = os.path.join(gt_base_path, "Front120_centerlane_annotation_v2.0.json")
+    #             #         json_data = load_encrypt_data(centerline_file, "Front120_annotation.json")
+    #             #         if is_wide_lane_gt(json_data):
+    #             #             wide_lane_gt_paths.append(gt_base_path)
+    #             #             print(f"{centerline_file} is wide lane gt")
+    # print(f"total {cnt} gt files")
+if __name__ == "__main__":
+
+    # filepath = "/mnt/desay_h3c/DriverData/monomap_driving_data/A19_003/20250906_211651_A19_003/SensorAnnotation/20250906_211655/20250906_211655_21_922/Mono3D/MonoMap"
+    main_entrance()
+    # a = load_encrypt_data(os.path.join(filepath, "Front120_centerlane_annotation_v2.0.json"), "Front120_annotation.json")
+
+    # print(f"is wide lane gt {is_wide_lane_gt(a)}")
+
+    # with open(os.path.join(os.getcwd(), 'input', 'gt3.json'), 'w', encoding='utf-8') as f:
+    #     json.dump(a, f)
+
+    # a = get_centerline_json_data(os.path.join(os.getcwd(), 'input', 'centerlane.json'))
+    # b = get_lineedge_json_data(os.path.join(os.getcwd(), 'input', 'lane.json'))
+    # result = {}
+    # load_line_edge_from_gt(b, result)
+    # load_lane_from_gt(a, result)
+    # write_lanes_to_csv(result['gt_bev_centerline']['centerline'], os.path.join(os.getcwd(), 'output', 'lane_origin.csv'))
+    # rebuild_wide_lane(result)
+    # write_lanes_to_csv(result['gt_bev_centerline']['centerline'], os.path.join(os.getcwd(), 'output', 'lane_new.csv'))
+    # write_lines_to_csv(result['gt_bev_lane_freespace']['lane'], os.path.join(os.getcwd(), 'output', 'line.csv'))
+
+
+    # write_back_modified_centerline(result['gt_bev_centerline']['centerline'], a, os.path.join(os.getcwd(), 'input', 'centerlane2.json'))
+    # d = get_centerline_json_data(os.path.join(os.getcwd(), 'input', 'centerlane2.json'))
+    # result2 = {}
+    # load_lane_from_gt(d, result2)
+    # write_lanes_to_csv(result2['gt_bev_centerline']['centerline'], os.path.join(os.getcwd(), 'output', 'lane_wb.csv'))
+    # if a and b:
+    #     print("success")
+    #     lanes, sta = get_wide_lanes(a["annotation"])
+    #     random_color = get_distinct_random_color()
+    #     draw_lanes(a["annotation"], sta)
