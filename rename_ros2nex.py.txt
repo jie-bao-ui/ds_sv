@@ -1,0 +1,179 @@
+#!/usr/bin/python3
+import os
+import sys
+
+def remove_lines(filename, n):
+    with open(filename, 'r') as file:
+        lines = file.readlines()
+
+    with open(filename, 'w') as file:
+        file.writelines(lines[n:])
+
+def rename_file_context(path):
+    if os.path.isdir(path):
+        filenames = os.listdir(path)
+        for filename in filenames:
+            domain = os.path.abspath(path)
+            filename = os.path.join(domain,filename)
+            if os.path.isdir(filename):
+                rename_file_context(filename)
+                continue
+            alter(filename)
+    elif os.path.isfile(path):
+        domain = os.path.abspath(path)
+        filename = os.path.join(domain,path)
+        alter(path)
+    else:
+        print(f"{path} does not exist.")
+def alter(file):
+    global context_map,ignore_files,ignore_context,ignore_context_tmp
+    file_suffix = os.path.splitext(file)[-1]
+    for ignore_suffix in ignore_files:
+        if ignore_suffix==file_suffix:
+            return
+    print(file)
+    file_data = ''
+    need_del_license = False
+    index = 0
+    with open(file,'r',encoding='utf-8') as f:
+        i=1
+        for line in f:
+            
+            # deal ignore 
+            for context in ignore_context.keys():
+                if context in line:
+                    line = line.replace(context,ignore_context[context])
+            # handle normal
+            for old_context in context_map.keys():
+                if old_context in line:
+                    line = line.replace(old_context,context_map[old_context])
+            # reduct ignore
+            for context_tmp in ignore_context_tmp.keys():
+                if context_tmp in line:
+                    line = line.replace(context_tmp,ignore_context_tmp[context_tmp])
+            # if "<license>" in line:
+            #     line = ''        
+            if i==7 or i==8:
+                if "http://www.apache.org/licenses/LICENSE-2.0" in line:
+                    # if context in line and file_suffix in ['.c','.h','.cpp','.hpp','.cmake','.py']:
+                    need_del_license = True
+                    index = i
+            i+=1
+            file_data += line
+    with open(file,'w',encoding='utf-8') as f:
+        f.write(file_data)
+    if need_del_license:
+        remove_lines(file,index+6)
+        need_del_license = 0
+           
+def rename_file(file_dir,old_name,new_name):
+
+    for root, dirs, files in os.walk(file_dir):
+        # print(1,root) #当前目录路径
+        # print(2,dirs) #当前路径下所有子目录list
+        # print(3,files) #当前路径下所有非目录子文件 list
+
+        # 1、先处理当前目录下的文件
+        for file_name in files:
+            if old_name in file_name:
+                old_file_path = root + "/" + file_name
+                new_file_name = file_name.replace(old_name, new_name)
+                new_file_path = root + "/" + new_file_name
+                print('old_file_path:',old_file_path)
+                print('new_file_path:',new_file_path)
+                os.rename(old_file_path, new_file_path)
+
+        # 2、递归处理目录下的子目录及子目录中的文件
+        for dir_name in dirs:
+            old_dir_path = root + "/" + dir_name
+
+            if old_name in dir_name:
+                new_dir_name = dir_name.replace(old_name, new_name)
+                new_dir_path = root + "/" + new_dir_name
+                print("old_dir_path:",old_dir_path)
+                print("new_dir_path:",new_dir_path)
+                os.rename(old_dir_path, new_dir_path)
+                dir_path = new_dir_path
+            else:
+                dir_path = old_dir_path
+                
+            rename_file(dir_path,old_name,new_name)
+        
+        
+if len(sys.argv)==1:
+    print('error, first arg not empty! ')
+    exit()
+
+ignore_files = {".pyc",".dia",".png",".zip",".gz",".db3",".xcf",".ttf",".mesh",".so"}
+
+ignore_context = {
+    "cros":"dingcheng01","CROS":"dingcheng02",
+    "intros":"dingcheng03","INTROS":"dingcheng04",
+    "eProsima":"dingcheng05","eprosima":"dingcheng06",
+    "Cross":"dingcheng07","circle":"dingcheng08",
+    "zeros":"dingcheng09","ZEROS":"dingcheng10",
+    "Zeros":"dingcheng11"
+    }
+ignore_context_tmp = {}
+for key,val in ignore_context.items():
+    ignore_context_tmp[val] = key
+
+context_map = {      
+            "rosbag2":"nexbag","ROSBAG2":"NEXBAG",
+            "rosbag":"nexbag","ROSBAG":"NEXBAG",
+            
+            "rviz2":"nviz",         
+            "rviz":"nviz",
+            "RVIZ":"NVIZ",
+            "Rviz":"Nviz",
+            "RViz":"NViz",
+            
+            "rqt":"nqt",
+            "RQT":"Nqt",
+            "Rqt":"Nqt",
+                 
+            "ROS 2":"NEX",
+            "Ros2":"Nmp",
+            
+            "ROSmessage":"NEXmessage",
+            "ROSArgsError":"NEXArgsError",
+            
+            "/ros/":"/nex/","/ROS/":"/NEX/",  
+            "\'ros\'":"\'nex\'","\'ROS\'":"\'NEX\'",
+            
+            "ros2":"nex","ROS2":"NEX",    
+            "rosidl":"nexidl","ROSIDL":"NEXIDL",
+            
+            "rcl":"nlib","RCL":"NLIB",
+            "rmw":"ncom","RMW":"NCOM",
+            
+            "rcutils":"ncutils","RCUTILS":"NCUTILS",
+            "rcpputils":"ncpputils","RCPPUTILS":"NCPPUTILS",
+            "rpyutils":"npyutils","RPYUTILS":"NPYUTILS",
+            
+            "roslaunch":"nexlaunch","ROSLAUNCH":"NEXLAUNCH",
+            "rosout":"nexout","ROSOUT":"NEXOUT",
+            "rosclock":"nexclock","ROSCLOCK":"NEXCLOCK",
+            "rosclock":"nexclock","ROSCLOCK":"NEXCLOCK",
+            "ROSClock":"NEXClock",               
+            "rosgraph":"nexgraph","ROSGRAPH":"NEXGRAPH",
+               
+            "ros":"nex","ROS":"NEX",
+            "Ros":"Nex",
+
+            
+               }
+
+for fpath in sys.argv[1:]:
+    
+    rename_file_context(fpath)
+
+    for key,val in ignore_context.items():      
+        rename_file(fpath,key,val)
+    for key,val in context_map.items():      
+        rename_file(fpath,key,val)
+    for key,val in ignore_context_tmp.items():     
+        rename_file(fpath,key,val)  
+    
+
+    
